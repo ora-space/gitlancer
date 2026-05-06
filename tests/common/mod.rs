@@ -5,6 +5,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Creates an isolated on-disk Git sandbox for integration tests.
+#[allow(dead_code)]
 pub struct TestScaffold {
     tmp_root: PathBuf,
     sandbox_root: PathBuf,
@@ -12,6 +13,7 @@ pub struct TestScaffold {
     worktrees_root: PathBuf,
 }
 
+#[allow(dead_code)]
 impl TestScaffold {
     /// Creates a unique sandbox repository under `.tmp` and initializes Git identity for commits.
     pub fn new(test_name: &str) -> Result<Self, String> {
@@ -30,7 +32,7 @@ impl TestScaffold {
         fs::create_dir_all(&worktrees_root)
             .map_err(|e| format!("create worktrees directory failed: {e}"))?;
 
-        run_git(&repo_path, ["init", "."])?;
+        run_git(&repo_path, ["init", "--initial-branch=main", "."])?;
         run_git(&repo_path, ["config", "user.name", "gitlancer-test"])?;
         run_git(
             &repo_path,
@@ -71,11 +73,7 @@ impl TestScaffold {
     }
 
     /// Creates a linked worktree so multi-worktree integration tests can stay focused on behavior.
-    pub fn create_linked_worktree(
-        &self,
-        name: &str,
-        branch_name: &str,
-    ) -> Result<PathBuf, String> {
+    pub fn create_linked_worktree(&self, name: &str, branch_name: &str) -> Result<PathBuf, String> {
         let worktree_path = self.linked_worktree_path(name);
         let path_arg = worktree_path.to_string_lossy().into_owned();
         run_git(
@@ -84,6 +82,13 @@ impl TestScaffold {
         )?;
 
         Ok(worktree_path)
+    }
+
+    /// Stages all current changes and creates one commit so integration tests can bootstrap repository history quickly.
+    pub fn stage_all_and_commit(&self, message: &str) -> Result<(), String> {
+        run_git(&self.repo_path, ["add", "."])?;
+        run_git(&self.repo_path, ["commit", "--no-gpg-sign", "-m", message])?;
+        Ok(())
     }
 
     /// Writes a UTF-8 file relative to one root path so tests can set up repository state tersely.

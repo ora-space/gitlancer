@@ -1,5 +1,7 @@
 # AGENTS.md
 
+Gitlancer is a Rust-based wrapper for the Git CLI.
+
 ```
 cargo fmt
 cargo test

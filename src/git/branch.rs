@@ -1,6 +1,8 @@
 use crate::domain::refs::BranchName;
 use crate::domain::repo::Repository;
-use crate::error::{GitlancerError, ParseError};
+use crate::error::GitlancerError;
+use crate::exec::command::{GitCommand, GitIntent};
+use crate::exec::env::GitEnv;
 use crate::exec::runner::GitRunner;
 use crate::git::Git;
 
@@ -17,14 +19,30 @@ pub struct ListBranchesResponse {
 }
 
 impl<R: GitRunner> Git<R> {
-    /// Lists branches once the branch parser and output contract are implemented.
+    /// Lists local branches from Git's ref database so callers can avoid parsing human-oriented branch output.
     pub fn list_branches(
         &self,
-        _request: ListBranchesRequest<'_>,
+        request: ListBranchesRequest<'_>,
     ) -> Result<ListBranchesResponse, GitlancerError> {
-        Err(ParseError::Unimplemented {
-            feature: "list_branches",
-        }
-        .into())
+        let command = GitCommand::new(
+            request.repository.root().as_path().to_path_buf(),
+            vec![
+                "for-each-ref".to_string(),
+                "--format=%(refname:short)".to_string(),
+                "refs/heads".to_string(),
+            ],
+            GitEnv::default(),
+            GitIntent::ReadOnly,
+        );
+        let output = self.runner().run(&command)?;
+        let branches = output
+            .stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(|line| BranchName::new(line.to_string()))
+            .collect();
+
+        Ok(ListBranchesResponse { branches })
     }
 }

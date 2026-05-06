@@ -1,11 +1,12 @@
 use crate::domain::paths::RepoRelativePath;
 use crate::domain::refs::CommitId;
 use crate::domain::worktree::WorktreeHandle;
-use crate::error::{GitlancerError, ParseError};
+use crate::error::GitlancerError;
 use crate::exec::command::{GitCommand, GitIntent};
 use crate::exec::env::GitEnv;
 use crate::exec::runner::GitRunner;
 use crate::git::Git;
+use crate::parse::commit::parse_commit_response;
 
 /// Carries the information needed to stage one or more repo-relative paths.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,8 +51,26 @@ impl<R: GitRunner> Git<R> {
     pub fn commit(&self, request: CommitRequest<'_>) -> Result<CommitResponse, GitlancerError> {
         let command = build_commit_command(&request);
         let _output = self.runner().run(&command)?;
+        let hash_output = self.runner().run(&GitCommand::new(
+            request.worktree.worktree_root().as_path().to_path_buf(),
+            vec!["rev-parse".to_string(), "HEAD".to_string()],
+            GitEnv::default(),
+            GitIntent::ReadOnly,
+        ))?;
+        let summary_output = self.runner().run(&GitCommand::new(
+            request.worktree.worktree_root().as_path().to_path_buf(),
+            vec![
+                "log".to_string(),
+                "-1".to_string(),
+                "--pretty=%s".to_string(),
+                "HEAD".to_string(),
+            ],
+            GitEnv::default(),
+            GitIntent::ReadOnly,
+        ))?;
+        let metadata = format!("{}\n{}", hash_output.stdout, summary_output.stdout);
 
-        Err(ParseError::Unimplemented { feature: "commit" }.into())
+        parse_commit_response(&metadata).map_err(Into::into)
     }
 }
 

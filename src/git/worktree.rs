@@ -1,6 +1,6 @@
 use crate::domain::repo::Repository;
 use crate::domain::worktree::WorktreeHandle;
-use crate::error::{GitlancerError, ParseError};
+use crate::error::{DomainError, GitlancerError};
 use crate::exec::runner::GitRunner;
 use crate::git::Git;
 
@@ -40,25 +40,56 @@ impl From<ListWorktreesResult> for ListWorktreesResponse {
 }
 
 impl<R: GitRunner> Git<R> {
-    /// Resolves one named worktree once repository-discovery and worktree-indexing logic is implemented.
+    /// Resolves one named worktree by scanning the repository's known worktrees and matching their stable names.
     pub fn resolve_worktree(
         &self,
-        _request: ResolveWorktreeRequest<'_>,
+        request: ResolveWorktreeRequest<'_>,
     ) -> Result<WorktreeHandle, GitlancerError> {
-        Err(ParseError::Unimplemented {
-            feature: "resolve_worktree",
-        }
-        .into())
+        let worktrees = self
+            .list_worktrees(crate::git::repository::ListWorktreesRequest {
+                repository: request.repository,
+            })?
+            .worktrees;
+
+        worktrees
+            .into_iter()
+            .find(|worktree| worktree_name(worktree) == request.worktree_name)
+            .ok_or_else(|| {
+                GitlancerError::Domain(DomainError::NotAWorktree(
+                    request.repository.root().as_path().to_path_buf(),
+                ))
+            })
     }
 
-    /// Finds which worktree contains a candidate path once canonical path matching is implemented.
+    /// Finds which worktree contains a candidate path by choosing the deepest worktree root prefix match.
     pub fn find_worktree(
         &self,
-        _request: FindWorktreeRequest<'_>,
+        request: FindWorktreeRequest<'_>,
     ) -> Result<WorktreeHandle, GitlancerError> {
-        Err(ParseError::Unimplemented {
-            feature: "find_worktree",
-        }
-        .into())
+        let candidate = normalize_candidate_path(request.candidate_path);
+        let worktrees = self
+            .list_worktrees(crate::git::repository::ListWorktreesRequest {
+                repository: request.repository,
+            })?
+            .worktrees;
+
+        worktrees
+            .into_iter()
+            .filter(|worktree| candidate.starts_with(worktree.worktree_root().as_path()))
+            .max_by_key(|worktree| worktree.worktree_root().as_path().components().count())
+            .ok_or_else(|| GitlancerError::Domain(DomainError::NotAWorktree(candidate)))
     }
+}
+
+/// Derives the stable name callers use to address one worktree.
+fn worktree_name(worktree: &WorktreeHandle) -> &str {
+    match worktree.kind() {
+        crate::domain::worktree::WorktreeKind::Main => "main",
+        crate::domain::worktree::WorktreeKind::Linked { name } => name.as_str(),
+    }
+}
+
+/// Normalizes a candidate path for prefix comparisons while preserving non-existent nested paths.
+fn normalize_candidate_path(path: &std::path::Path) -> std::path::PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
