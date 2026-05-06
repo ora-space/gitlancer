@@ -8,7 +8,7 @@ use gitlancer::git::commit::{AddRequest, CommitRequest};
 use gitlancer::git::repository::ListWorktreesRequest;
 use gitlancer::git::status::StatusRequest;
 use gitlancer::git::worktree::{FindWorktreeRequest, ResolveWorktreeRequest};
-use gitlancer::{CliGitRunner, Git, RepoRelativePath, RepoRoot, WorktreeKind};
+use gitlancer::{CliGitRunner, Git, RepoRoot, WorktreeKind};
 
 /// Creates an initial commit so linked worktrees can be created from a valid repository history.
 fn seed_repository(scaffold: &TestScaffold) {
@@ -124,7 +124,11 @@ fn runtime_reports_status_and_commit_metadata() {
     let add_result = git
         .add(AddRequest {
             worktree: &worktree,
-            paths: vec![RepoRelativePath::new(Path::new("linked.txt"))],
+            paths: vec![
+                worktree
+                    .resolve_repo_relative_path(Path::new("linked.txt"))
+                    .expect("resolve linked file path"),
+            ],
         })
         .expect("stage linked file");
     let commit_result = git
@@ -155,5 +159,36 @@ fn runtime_reports_status_and_commit_metadata() {
         commit_result.commit_id.as_str().len(),
         40,
         "commit should return a full object ID"
+    );
+}
+
+/// Verifies repo-relative path resolution rejects traversal attempts that escape the worktree root.
+#[test]
+fn worktree_rejects_paths_outside_the_checkout() {
+    let scaffold = TestScaffold::new("runtime-rejects-outside-paths").expect("create scaffold");
+    seed_repository(&scaffold);
+    let linked_path = scaffold
+        .create_linked_worktree("feature-tree", "feature/runtime")
+        .expect("create linked worktree");
+
+    let git = Git::new(CliGitRunner);
+    let repository = git
+        .discover_repository(RepoRoot::new(&linked_path))
+        .expect("discover repository");
+    let worktree = git
+        .resolve_worktree(ResolveWorktreeRequest {
+            repository: &repository,
+            worktree_name: "feature-tree",
+        })
+        .expect("resolve linked worktree");
+    let outside = scaffold.sandbox_root().join("outside.txt");
+
+    let error = worktree
+        .resolve_repo_relative_path(&outside)
+        .expect_err("outside paths must be rejected");
+
+    assert!(
+        matches!(error, gitlancer::DomainError::PathOutsideWorktree { .. }),
+        "paths outside the worktree should fail with PathOutsideWorktree"
     );
 }

@@ -53,8 +53,8 @@ impl GitDir {
 pub struct RepoRelativePath(PathBuf);
 
 impl RepoRelativePath {
-    /// Creates a repo-relative path wrapper from a caller-provided relative path.
-    pub fn new(path: impl AsRef<Path>) -> Self {
+    /// Creates a repo-relative path wrapper from a path that has already been validated by a worktree-aware API.
+    pub(crate) fn new(path: impl AsRef<Path>) -> Self {
         Self(path.as_ref().to_path_buf())
     }
 
