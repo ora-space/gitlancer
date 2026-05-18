@@ -116,7 +116,7 @@ impl<R: GitRunner> Git<R> {
             .into_iter()
             .filter(|worktree| candidate.starts_with(worktree.worktree_root().as_path()))
             .max_by_key(|worktree| worktree.worktree_root().as_path().components().count())
-            .ok_or_else(|| GitlancerError::Domain(DomainError::NotAWorktree(candidate)))
+            .ok_or(GitlancerError::Domain(DomainError::NotAWorktree(candidate)))
     }
 
     /// Creates one linked worktree and returns the resulting typed worktree handle.

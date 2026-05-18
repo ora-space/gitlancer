@@ -4,6 +4,7 @@ Gitlancer is a Rust-based wrapper for the Git CLI.
 
 ```
 cargo fmt
+cargo clippy -- -D warnings
 cargo test
 ```
 
