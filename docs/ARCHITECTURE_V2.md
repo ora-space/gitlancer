@@ -68,7 +68,8 @@ The Git layer exposes typed use cases that Ora can call directly:
 - repository discovery,
 - worktree discovery and selection,
 - add / commit / status,
-- branch-oriented read flows.
+- branch-oriented read and lifecycle flows,
+- linked-worktree lifecycle flows.
 
 Each use case should take a typed request object and return a typed response object.
 That keeps option growth manageable and produces better call boundaries for agent orchestration.
@@ -135,6 +136,17 @@ pub struct CommitRequest<'a> {
 
 pub struct ListWorktreesRequest<'a> {
     pub repository: &'a Repository,
+}
+
+pub struct CreateBranchRequest<'a> {
+    pub repository: &'a Repository,
+    pub branch_name: BranchName,
+}
+
+pub struct DeleteWorktreeRequest<'a> {
+    pub repository: &'a Repository,
+    pub worktree: &'a WorktreeHandle,
+    pub mode: WorktreeDeletionMode,
 }
 ```
 

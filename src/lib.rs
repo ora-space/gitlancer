@@ -5,6 +5,7 @@ pub mod git;
 pub mod parse;
 
 pub use domain::paths::{GitDir, RepoRelativePath, RepoRoot, WorktreeRoot};
+pub use domain::refs::{BranchName, CommitId};
 pub use domain::repo::Repository;
 pub use domain::worktree::{WorktreeHandle, WorktreeKind};
 pub use error::{DomainError, GitExecError, GitlancerError, ParseError};

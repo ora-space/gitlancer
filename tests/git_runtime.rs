@@ -3,12 +3,18 @@ mod common;
 use std::path::Path;
 
 use common::TestScaffold;
-use gitlancer::git::branch::ListBranchesRequest;
+use gitlancer::git::branch::{
+    BranchDeletionMode, CreateBranchRequest, DeleteBranchRequest, ListBranchesRequest,
+};
 use gitlancer::git::commit::{AddRequest, CommitRequest};
 use gitlancer::git::repository::ListWorktreesRequest;
 use gitlancer::git::status::StatusRequest;
-use gitlancer::git::worktree::{FindWorktreeRequest, ResolveWorktreeRequest};
-use gitlancer::{CliGitRunner, Git, RepoRoot, WorktreeKind};
+use gitlancer::git::worktree::{
+    CreateWorktreeRequest, DeleteWorktreeRequest, FindWorktreeRequest, ResolveWorktreeRequest,
+    WorktreeDeletionMode,
+};
+use gitlancer::{BranchName, CliGitRunner, Git, RepoRoot, WorktreeKind, WorktreeRoot};
+use pretty_assertions::assert_eq;
 
 /// Creates an initial commit so linked worktrees can be created from a valid repository history.
 fn seed_repository(scaffold: &TestScaffold) {
@@ -18,6 +24,16 @@ fn seed_repository(scaffold: &TestScaffold) {
     scaffold
         .stage_all_and_commit("chore: seed repository")
         .expect("create initial commit");
+}
+
+/// Returns a typed runtime and repository handle for one scaffold so lifecycle tests can focus on behavior.
+fn runtime_repository(scaffold: &TestScaffold) -> (Git<CliGitRunner>, gitlancer::Repository) {
+    let git = Git::new(CliGitRunner);
+    let repository = git
+        .discover_repository(RepoRoot::new(scaffold.repo_path()))
+        .expect("discover repository");
+
+    (git, repository)
 }
 
 /// Verifies the runtime can discover repositories, list worktrees, resolve linked worktrees, and enumerate branches.
@@ -190,5 +206,186 @@ fn worktree_rejects_paths_outside_the_checkout() {
     assert!(
         matches!(error, gitlancer::DomainError::PathOutsideWorktree { .. }),
         "paths outside the worktree should fail with PathOutsideWorktree"
+    );
+}
+
+/// Verifies branch lifecycle APIs create and delete local branches through typed repository requests.
+#[test]
+fn runtime_creates_and_deletes_local_branches() {
+    let scaffold = TestScaffold::new("runtime-branch-lifecycle").expect("create scaffold");
+    seed_repository(&scaffold);
+    let (git, repository) = runtime_repository(&scaffold);
+
+    let created = git
+        .create_branch(CreateBranchRequest {
+            repository: &repository,
+            branch_name: BranchName::new("feature/runtime"),
+        })
+        .expect("create branch");
+    let branches_after_create = git
+        .list_branches(ListBranchesRequest {
+            repository: &repository,
+        })
+        .expect("list branches after create");
+    let deleted = git
+        .delete_branch(DeleteBranchRequest {
+            repository: &repository,
+            branch_name: BranchName::new("feature/runtime"),
+            mode: BranchDeletionMode::Checked,
+        })
+        .expect("delete branch");
+    let branches_after_delete = git
+        .list_branches(ListBranchesRequest {
+            repository: &repository,
+        })
+        .expect("list branches after delete");
+
+    assert_eq!(created.branch, BranchName::new("feature/runtime"));
+    assert!(
+        branches_after_create
+            .branches
+            .iter()
+            .any(|branch| branch.as_str() == "feature/runtime"),
+        "created branches should be visible through list_branches"
+    );
+    assert_eq!(deleted.branch, BranchName::new("feature/runtime"));
+    assert!(
+        !branches_after_delete
+            .branches
+            .iter()
+            .any(|branch| branch.as_str() == "feature/runtime"),
+        "deleted branches should no longer be visible through list_branches"
+    );
+}
+
+/// Verifies linked worktree lifecycle APIs create and delete linked worktrees through typed runtime requests.
+#[test]
+fn runtime_creates_and_deletes_linked_worktrees() {
+    let scaffold = TestScaffold::new("runtime-worktree-lifecycle").expect("create scaffold");
+    seed_repository(&scaffold);
+    let (git, repository) = runtime_repository(&scaffold);
+    let worktree_path = scaffold.linked_worktree_path("feature-tree");
+
+    let created = git
+        .create_worktree(CreateWorktreeRequest {
+            repository: &repository,
+            worktree_root: WorktreeRoot::new(&worktree_path),
+            branch_name: BranchName::new("feature/runtime"),
+        })
+        .expect("create worktree");
+    let worktrees_after_create = git
+        .list_worktrees(ListWorktreesRequest {
+            repository: &repository,
+        })
+        .expect("list worktrees after create");
+    let deleted = git
+        .delete_worktree(DeleteWorktreeRequest {
+            repository: &repository,
+            worktree: &created.worktree,
+            mode: WorktreeDeletionMode::Checked,
+        })
+        .expect("delete linked worktree");
+    let worktrees_after_delete = git
+        .list_worktrees(ListWorktreesRequest {
+            repository: &repository,
+        })
+        .expect("list worktrees after delete");
+
+    assert!(
+        matches!(created.worktree.kind(), WorktreeKind::Linked { name } if name == "feature-tree"),
+        "created worktrees should come back as linked worktrees"
+    );
+    assert!(
+        worktrees_after_create
+            .worktrees
+            .iter()
+            .any(|worktree| worktree.worktree_root().as_path() == worktree_path.as_path()),
+        "created worktrees should be visible through list_worktrees"
+    );
+    assert_eq!(deleted.worktree_root, WorktreeRoot::new(&worktree_path));
+    assert!(
+        !worktrees_after_delete
+            .worktrees
+            .iter()
+            .any(|worktree| worktree.worktree_root().as_path() == worktree_path.as_path()),
+        "deleted worktrees should no longer be visible through list_worktrees"
+    );
+}
+
+/// Verifies main-worktree deletion is rejected before Git attempts a destructive worktree removal.
+#[test]
+fn runtime_rejects_main_worktree_deletion() {
+    let scaffold =
+        TestScaffold::new("runtime-rejects-main-worktree-delete").expect("create scaffold");
+    seed_repository(&scaffold);
+    let (git, repository) = runtime_repository(&scaffold);
+    let worktrees = git
+        .list_worktrees(ListWorktreesRequest {
+            repository: &repository,
+        })
+        .expect("list worktrees");
+    let main_worktree = worktrees
+        .worktrees
+        .into_iter()
+        .find(|worktree| matches!(worktree.kind(), WorktreeKind::Main))
+        .expect("main worktree");
+
+    let error = git
+        .delete_worktree(DeleteWorktreeRequest {
+            repository: &repository,
+            worktree: &main_worktree,
+            mode: WorktreeDeletionMode::Checked,
+        })
+        .expect_err("main worktree deletion should be rejected");
+
+    assert!(
+        matches!(
+            error,
+            gitlancer::GitlancerError::Domain(
+                gitlancer::DomainError::MainWorktreeDeletionUnsupported(repo)
+            ) if repo == repository.root().as_path()
+        ),
+        "main worktree deletion should fail with MainWorktreeDeletionUnsupported"
+    );
+}
+
+/// Verifies worktree deletion rejects linked worktrees that do not belong to the supplied repository.
+#[test]
+fn runtime_rejects_cross_repository_worktree_deletion() {
+    let left = TestScaffold::new("runtime-worktree-mismatch-left").expect("create left scaffold");
+    let right =
+        TestScaffold::new("runtime-worktree-mismatch-right").expect("create right scaffold");
+    seed_repository(&left);
+    seed_repository(&right);
+
+    let (left_git, left_repository) = runtime_repository(&left);
+    let (_, right_repository) = runtime_repository(&right);
+    let linked_path = left
+        .create_linked_worktree("feature-tree", "feature/runtime")
+        .expect("create linked worktree");
+    let linked_worktree = left_git
+        .resolve_worktree(ResolveWorktreeRequest {
+            repository: &left_repository,
+            worktree_name: "feature-tree",
+        })
+        .expect("resolve linked worktree");
+
+    let error = left_git
+        .delete_worktree(DeleteWorktreeRequest {
+            repository: &right_repository,
+            worktree: &linked_worktree,
+            mode: WorktreeDeletionMode::Checked,
+        })
+        .expect_err("cross-repository worktree deletion should be rejected");
+
+    assert!(
+        matches!(
+            error,
+            gitlancer::GitlancerError::Domain(gitlancer::DomainError::WorktreeMismatch {
+                worktree,
+                repo,
+            }) if worktree == linked_path && repo == right_repository.root().as_path()
+        ),
+        "cross-repository deletions should fail with WorktreeMismatch"
     );
 }

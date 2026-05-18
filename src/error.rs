@@ -25,9 +25,21 @@ pub enum DomainError {
     #[error("path is not a repository root: {0:?}")]
     NotARepository(PathBuf),
 
+    /// Returned when a caller names a local branch that does not exist in the supplied repository.
+    #[error("branch does not exist in repository {repo:?}: {branch}")]
+    BranchNotFound { repo: PathBuf, branch: String },
+
+    /// Returned when a caller attempts to create a local branch that already exists.
+    #[error("branch already exists in repository {repo:?}: {branch}")]
+    BranchAlreadyExists { repo: PathBuf, branch: String },
+
     /// Returned when a path is expected to be a worktree root but is not.
     #[error("path is not a worktree root: {0:?}")]
     NotAWorktree(PathBuf),
+
+    /// Returned when a caller tries to delete the repository's main worktree through the linked-worktree lifecycle API.
+    #[error("cannot delete the main worktree for repository {0:?}")]
+    MainWorktreeDeletionUnsupported(PathBuf),
 
     /// Returned when a path cannot be safely expressed relative to the worktree root.
     #[error("path {path:?} is outside worktree {worktree:?}")]
