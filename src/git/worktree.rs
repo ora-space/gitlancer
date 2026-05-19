@@ -170,9 +170,23 @@ fn worktree_name(worktree: &WorktreeHandle) -> &str {
     }
 }
 
-/// Normalizes a candidate path for prefix comparisons while preserving non-existent nested paths.
+/// Normalizes a candidate path lexically so worktree comparisons do not depend on filesystem canonicalization.
 fn normalize_candidate_path(path: &std::path::Path) -> std::path::PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    let mut normalized = std::path::PathBuf::new();
+
+    for component in path.components() {
+        match component {
+            std::path::Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            std::path::Component::RootDir => normalized.push(component.as_os_str()),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                let _ = normalized.pop();
+            }
+            std::path::Component::Normal(part) => normalized.push(part),
+        }
+    }
+
+    normalized
 }
 
 /// Builds a stable `git worktree add` command so linked-worktree creation stays explicit and testable.
